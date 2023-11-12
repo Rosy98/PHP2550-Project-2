@@ -1,0 +1,272 @@
+---
+title: "Project 2"
+author: "Zihan Zhou"
+subtitle: "[Github Link]"
+date: "`r Sys.Date()`"
+output: pdf_document
+abstract: "This is my abstract."
+bib
+---
+
+```{r setup, include=FALSE}
+# Load library
+library(knitr)
+library(tidyr)
+library(formatR)
+library(kableExtra)
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+library(stringr)
+library(tidyverse)  
+library(mice) 
+library(glmnet)  
+library(bestglm) 
+library(pROC)
+opts_chunk$set(tidy.opts=list(width.cutoff=60),tidy=TRUE)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, echo = FALSE, fig.align = "center")
+```
+
+```{r}
+# Load data
+data <- read.csv("project2.csv")
+```
+
+# Introduction
+
+# EDA
+```{r, results='hide'}
+###### EDA ######
+# check data type
+sapply(data, class)
+```
+
+
+```{r}
+# change the data type according to the codebook
+data$center <- as.factor(data$center)
+data$mat_race <- as.factor(data$mat_race)
+data$mat_ethn <- as.factor(data$mat_ethn)
+data$del_method <- as.factor(data$del_method)
+data$prenat_ster <- as.factor(data$prenat_ster)
+data$com_prenat_ster <- as.factor(data$com_prenat_ster)
+data$mat_chorio <- as.factor(data$mat_chorio)
+data$gender <- as.factor(data$gender)
+data$sga <- as.factor(data$sga)
+data$any_surf <- as.factor(data$any_surf)
+data$Death <- as.factor(data$Death)
+
+data$ventilation_support_level.36 <- as.factor(data$ventilation_support_level.36)
+data$ventilation_support_level_modified.44 <- as.factor(data$ventilation_support_level_modified.44)
+data$Trach <- as.factor(data$Trach)
+
+# drop race
+data <- data[, -c(3,4)]
+```
+
+According to the record id in the data, patients with missing center are actually in center 1.
+```{r}
+data[is.na(data$center), ]$center <- 1
+```
+
+```{r}
+which(duplicated(data$record_id))
+data <- data[!duplicated(data),]
+```
+
+
+```{r}
+# check missing data
+data_miss <- data %>% select(colnames(data[,colSums(is.na(data))>0]))
+# calculate the percentage of missing
+data_miss_pct <- data.frame(cbind(Number = colSums(is.na(data_miss)), 
+                                  Pct = paste0(round(100*colSums(is.na(data_miss))/nrow(data_miss), 2), "%"))) %>%
+  arrange(desc(Pct))
+data_miss_pct$Variable <- rownames(data_miss_pct)
+rownames(data_miss_pct) <- NULL
+data_miss_pct <- data_miss_pct[, c(3,1,2)] # reorder the column
+
+# create table for summary of missing values
+n <- nrow(data_miss_pct)
+second <- n %/% 2
+
+# Splitting the data frame into 3 parts
+df1 <- data_miss_pct[1:second,]
+df2 <- data_miss_pct[(second+1):n,]
+rownames(df2) <- NULL
+```
+
+```{r}
+kable(cbind(df1, df2), booktabs = T, escape = T, 
+      caption = "Summary of Missing Values",
+      align = "c") %>%
+  kable_styling(latex_options = c("HOLD_position", "scale_down"))
+```
+
+
+
+```{r}
+# check the data in general
+data[, -1] %>%
+  tbl_summary()
+```
+The records from center 2 are predominantly numerous. The total observations are 999 but center 2 has 633, which has a 63% percent.
+
+
+
+```{r}
+data[, -1] %>%
+  tbl_summary(by=Trach)
+```
+
+```{r}
+data[, -1] %>%
+  tbl_strata(strata = center,
+    .tbl_fun =
+      ~ .x %>% tbl_summary(by=Trach, type = list(where(is.numeric) ~ "continuous")))
+```
+
+
+```{r}
+data_demo[, -1] %>% tbl_summary(by = gender)
+```
+# Create a 2-level composite outcome
+```{r}
+# Create a 2-level composite outcome
+data$Y <- case_when(data$Trach == 0 & data$Death == "No" ~ 0, 
+                    data$Trach == 1 | data$Death == "Yes" ~ 1)
+```
+
+
+
+
+# imputation
+```{r}
+data_df_mice_out <- mice(data, 5, pri=F)
+
+# Store each imputed data set
+data_df_imp <- vector("list",5)    
+for (i in 1:5){
+  data_df_imp[[i]] <- mice::complete(data_df_mice_out,i) 
+}
+```
+
+# Model
+
+## Lasso
+```{r}
+###################################################### 
+#### Lasso #### 
+###################################################### 
+
+lasso <- function(df) { 
+  #' Runs 10-fold CV for lasso and returns corresponding coefficients 
+  #' @param df, data set
+  #' @return coef, coefficients for minimum cv error
+  
+  # Matrix form for ordered variables 
+  x.ord <- model.matrix(Y~., data = df[, -c(1, 29, 30)])[, -1]
+  y.ord <- df$Y
+  
+  # Generate folds
+  k <- 10 
+  set.seed(1) # consistent seeds between imputed data sets
+  folds <- sample(1:k, nrow(df), replace=TRUE)
+  
+  # Lasso model
+  lasso_mod_cv <- cv.glmnet(x.ord, y.ord, nfolds = 10, foldid = folds, 
+                         alpha = 1, family = "binomial") 
+  lasso_mod <- glmnet(x.ord, y.ord, nfolds = 10, alpha = 1, family = "binomial",
+                      lambda = lasso_mod_cv$lambda.min)
+  
+  # Get coefficients 
+  coef <- coef(lasso_mod) 
+  return(coef) 
+} 
+
+# Find average lasso coefficients over imputed datasets
+lasso_coef1 <- lasso(data_df_imp[[1]]) 
+lasso_coef2 <- lasso(data_df_imp[[2]]) 
+lasso_coef3 <- lasso(data_df_imp[[3]]) 
+lasso_coef4 <- lasso(data_df_imp[[4]]) 
+lasso_coef5 <- lasso(data_df_imp[[5]]) 
+lasso_coef <- cbind(lasso_coef1, lasso_coef2, lasso_coef3, 
+                    lasso_coef4, lasso_coef5) 
+avg_coefs_lasso <- apply(lasso_coef, 1, mean) 
+```
+
+## Ridge
+```{r}
+###################################################### 
+#### Ridge #### 
+###################################################### 
+
+ridge <- function(df) { 
+  #' Runs 10-fold CV for ridge and returns corresponding coefficients 
+  #' @param df, data set
+  #' @return coef, coefficients for minimum cv error
+  
+  # Matrix form for ordered variables 
+  x.ord <- model.matrix(Y~., data = df[, -c(1, 29, 30)])[, -1]
+  y.ord <- df$Y
+  
+  # Generate folds
+  k <- 10 
+  set.seed(1) # consistent seeds between imputed data sets
+  folds <- sample(1:k, nrow(df), replace=TRUE)
+  
+  # Ridge model
+  ridge_mod_cv <- cv.glmnet(x.ord, y.ord, nfolds = 10, foldid = folds, 
+                         alpha = 0, family = "binomial") 
+  ridge_mod <- glmnet(x.ord, y.ord, nfolds = 10, alpha = 0, family = "binomial",
+                      lambda = ridge_mod_cv$lambda.min)
+  
+  # Get coefficients 
+  coef <- coef(ridge_mod) 
+  return(coef) 
+} 
+
+# Find average ridge coefficients over imputed datasets
+ridge_coef1 <- ridge(tb_df_imp[[1]]) 
+ridge_coef2 <- ridge(tb_df_imp[[2]]) 
+ridge_coef3 <- ridge(tb_df_imp[[3]]) 
+ridge_coef4 <- ridge(tb_df_imp[[4]]) 
+ridge_coef5 <- ridge(tb_df_imp[[5]]) 
+ridge_coef <- cbind(ridge_coef1, ridge_coef2, ridge_coef3, 
+                    ridge_coef4, ridge_coef5) 
+avg_coefs_ridge <- apply(ridge_coef, 1, mean) 
+
+# Find predicted probabilities on long imputed data
+tb_df_long$score_ridge <- x_vars %*% avg_coefs_ridge
+mod_ridge <- glm(tb~score_ridge, data = tb_df_long, family = "binomial")
+predict_probs_ridge <- predict(mod_ridge, type="response")
+
+```
+
+
+## Forward stepwise
+```{r}
+###################################################### 
+#### Logistic #### 
+###################################################### 
+
+logistic_coef <- matrix(nrow=16, ncol=5)
+for(i in 1:5) {
+  mod_logistic <- glm(tb~age_group+hiv_pos+diabetes+ever_smoke+past_tb
+                      +male+hs_less+two_weeks_symp+num_symptoms, 
+                      family=binomial(), data=tb_df_imp[[i]])
+  logistic_coef[,i] <- coef(mod_logistic)
+}
+
+avg_coefs_logistic <- apply(logistic_coef, 1, mean)
+
+# Actual scoring system coefficients
+tb_df_long$score_logistic <- x_vars %*% avg_coefs_logistic
+mod_logistic <- glm(tb~score_logistic, data = tb_df_long, family = "binomial")
+predict_probs_logistic <- predict(mod_logistic, type="response")
+
+```
+
+
+
+# References
