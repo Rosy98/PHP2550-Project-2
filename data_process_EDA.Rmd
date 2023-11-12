@@ -1,0 +1,118 @@
+---
+title: "data process and EDA"
+author: "Zihan Zhou"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# load library
+library(gtsummary)
+library(kableExtra)
+library(tidyverse)
+```
+
+```{r}
+# Load data
+data <- read.csv("project2.csv")
+```
+
+# Data Process
+```{r}
+###### EDA ######
+# check data type
+sapply(data, class)
+```
+
+```{r}
+# change the data type according to the codebook
+data$center <- as.factor(data$center)
+data$mat_race <- as.factor(data$mat_race)
+data$mat_ethn <- as.factor(data$mat_ethn)
+data$del_method <- as.factor(data$del_method)
+data$prenat_ster <- as.factor(data$prenat_ster)
+data$com_prenat_ster <- as.factor(data$com_prenat_ster)
+data$mat_chorio <- as.factor(data$mat_chorio)
+data$gender <- as.factor(data$gender)
+data$sga <- as.factor(data$sga)
+data$any_surf <- as.factor(data$any_surf)
+data$Death <- as.factor(data$Death)
+
+data$ventilation_support_level.36 <- as.factor(data$ventilation_support_level.36)
+data$ventilation_support_level_modified.44 <- as.factor(data$ventilation_support_level_modified.44)
+data$Trach <- as.factor(data$Trach)
+```
+
+
+## missing data
+```{r}
+# check missing data
+data_miss <- data %>% select(colnames(data[,colSums(is.na(data))>0]))
+# calculate the percentage of missing
+data_miss_pct <- data.frame(cbind(Number = colSums(is.na(data_miss)), 
+                                  Pct = paste0(round(100*colSums(is.na(data_miss))/nrow(data_miss), 2), "%"))) %>%
+  arrange(desc(Pct))
+data_miss_pct$Variable <- rownames(data_miss_pct)
+rownames(data_miss_pct) <- NULL
+data_miss_pct <- data_miss_pct[, c(3,1,2)] # reorder the column
+
+# create table for summary of missing values
+n <- nrow(data_miss_pct)
+second <- n %/% 2
+
+# Splitting the data frame into 3 parts
+df1 <- data_miss_pct[1:second,]
+df2 <- data_miss_pct[(second+1):n,]
+rownames(df2) <- NULL
+```
+
+```{r}
+kable(cbind(df1, df2), booktabs = T, escape = T, 
+      caption = "Summary of Missing Values",
+      align = "c") %>%
+  kable_styling(latex_options = c("HOLD_position", "scale_down"))
+```
+
+
+According to the record id in the data, patients with missing center are actually in center 1.
+```{r}
+data[is.na(data$center), ]$center <- 1
+```
+
+Drop duplicated records.
+```{r}
+which(duplicated(data$record_id))
+data <- data[!duplicated(data),]
+```
+
+# EDA
+
+## Demographics and Clinical Diagnosis
+
+Race was coded differently than the codebook, so drop it.
+```{r}
+# drop race
+data <- data[, -3]
+```
+
+```{r}
+# check the data in general
+data[, -1] %>%
+  tbl_summary(missing = "no")
+```
+
+```{r}
+# by gender
+data[, -1] %>%
+  tbl_summary(by = gender, missing = "no")
+```
+
+
+```{r}
+# by trach
+data[, -c(1,2)] %>%
+  tbl_summary(by = Trach, missing = "no")
+```
+
