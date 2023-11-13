@@ -4,8 +4,8 @@ This repository is created for Project 2 of PHP2515. This project is a collabora
 
 The goal is to create a regression model to predict the composite outcome of tracheostomy or death, thus guiding to determine the criteria and optimal timing for tracheostomy. Several models will be discussed and compared, including mixed-effects model, best subset selection, and lasso regression and ridge regression. The language used for this project is R.
 ## Files
-- `data_process_EDA`: Code to preprocess data and basic exploratory data analysis.
-- `Project2_Final.rmd`: Code and text to generate the report.
+- `data_process_EDA.Rmd`: Code to preprocess data and basic exploratory data analysis.
+- `Project2_Final.Rmd`: Code and text to generate the report.
 - `Project2_Final.pdf`: The submitted report.
 - `Project2.bib`: Bibliography used for this project.
 
