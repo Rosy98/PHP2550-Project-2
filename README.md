@@ -9,5 +9,33 @@ The goal is to create a regression model to predict the composite outcome of tra
 - `Project2_Final.pdf`: The submitted report.
 - `Project2.bib`: Bibliography used for this project.
 
+## Packages
+| Package    | Version  |
+|------------|----------|
+| knitr      | 1.44     |
+| car        | 3.1-2    |
+| carData    | 3.0-5    |
+| MASS       | 7.3-58.2 |
+| lme4       | 1.1-34   |
+| leaps      | 3.1      |
+| L0Learn    | 2.1.0    |
+| gtsummary  | 1.7.2    |
+| pROC       | 1.18.4   |
+| glmnet     | 4.1-8    |
+| Matrix     | 1.6-1.1  |
+| mice       | 3.16.0   |
+| lubridate  | 1.9.3    |
+| forcats    | 1.0.0    |
+| stringr    | 1.5.0    |
+| dplyr      | 1.1.3    |
+| purrr      | 1.0.2    |
+| readr      | 2.1.4    |
+| tidyr      | 1.3.0    |
+| tibble     | 3.2.1    |
+| ggplot2    | 3.4.4    |
+| tidyverse  | 2.0.0    |
+| kableExtra | 1.3.4    |
+
+
 ## License
 Distributed under the MIT License. 
