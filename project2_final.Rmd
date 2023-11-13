@@ -1,0 +1,1055 @@
+---
+title: "Project 2: Regression Analysis"
+author: "Zihan Zhou"
+subtitle: "[Github Link](https://github.com/Rosy98/PHP2550-Project-2)"
+date: "`r Sys.Date()`"
+output: pdf_document
+abstract: "This study talks about the development and comparison of various regression models to predict the necessity and timing of tracheostomy placement in infants diagnosed with severe Bronchopulmonary Dysplasia (BPD). Utilizing a rich multi-center dataset from  BPD Collaborative Registry, this project examined an array of demographic and clinical variables to identify significant predictors of tracheostomy or death. Our findings indicate that lower birth metrics and the need for ventilation support at critical postmenstrual ages are closely associated with higher tracheostomy rates and mortality. The models' performance, particularly the mixed-effects model, highlighted the random variability across different medical centers, suggesting the need for a nuanced approach in clinical decision-making. Despite demonstrating robust predictive power, the models' limitations stem from untested logistic regression assumptions such as linearity, the impact of outliers, and multicollinearity. These limitations highlight areas for future research and model optimization to enhance predictive accuracy and clinical utility. The results underscore the complexity of managing severe BPD and the potential for regression models to inform clinical strategies to improve patient outcomes."
+
+bibliography: Project2.bib
+---
+
+```{r setup, include=FALSE}
+# Load library
+library(knitr)
+library(tidyr)
+library(formatR)
+library(kableExtra)
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+library(stringr)
+library(tidyverse)  
+library(mice) 
+library(glmnet)  
+library(bestglm) 
+library(pROC)
+library(gtsummary)
+library(L0Learn)
+library(leaps)
+library(lme4)
+library(MASS)
+library(car)
+opts_chunk$set(tidy.opts=list(width.cutoff=60),tidy=TRUE)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, echo = FALSE, fig.align = "center")
+
+```
+
+```{r}
+# Load data
+data <- read.csv("project2.csv")
+
+```
+
+```{r}
+# change the data type according to the codebook
+data$center <- as.factor(data$center)
+data$mat_race <- as.factor(data$mat_race)
+data$mat_ethn <- as.factor(data$mat_ethn)
+data$del_method <- as.factor(data$del_method)
+data$prenat_ster <- as.factor(data$prenat_ster)
+data$com_prenat_ster <- as.factor(data$com_prenat_ster)
+data$mat_chorio <- as.factor(data$mat_chorio)
+data$gender <- as.factor(data$gender)
+data$sga <- as.factor(data$sga)
+data$any_surf <- as.factor(data$any_surf)
+data$Death <- as.factor(data$Death)
+
+data$ventilation_support_level.36 <- as.factor(data$ventilation_support_level.36)
+data$ventilation_support_level_modified.44 <- as.factor(data$ventilation_support_level_modified.44)
+data$Trach <- as.factor(data$Trach)
+
+```
+
+# 1. Introduction
+
+Bronchopulmonary dysplasia (BPD) is the most common and one of the
+prognostically significant consequence of premature birth, affecting
+between 10,000 and 15,000 infants in the United States each year
+[@jensenEpidemiologyBronchopulmonaryDysplasia2014]. Despite advances in
+understanding its pathophysiology and the development of management
+strategies aimed at reducing its occurrence, the incidence of BPD has
+remained unchanged over the years [@stollTrendsCarePractices2015]. In
+cases of severe BPD, particularly Grade 3 (defined by 2001 NHLBI
+criteria), which requires ventilator dependence at 36 weeks of corrected
+gestational age, about 75% of these infants still need ventilator
+support upon hospital discharge, although not permanently. Tracheostomy,
+which is necessary for 2-4% of infants with BPD and up to 12% of those
+with severe or Grade 3 BPD, has several benefits such as stable airway
+maintenance, improved growth, and enhanced age-appropriate interactions.
+Early tracheostomy within four months, is associated with better
+outcomes, with infants receiving this procedure earlier (before 120
+days) showing lower risks of death or neurodevelopmental impairment at
+18-22 months [@demauroDevelopmentalOutcomesVery2014]. However, there is
+still no consensus on the optimal timing for tracheostomy. Previous
+studies utilizing large databases have successfully predicted the
+likelihood of tracheostomy or death using basic demographics and
+clinical diagnosis. However, these studies lacked detailed respiratory
+data and did not offer predictions at varying postmenstrual ages (PMA).
+
+This project aims to create a regression model to predict the composite
+outcome of tracheostomy or death, thus guiding to determine the criteria
+and optimal timing for tracheostomy. Several models will be discussed
+and compared, including mixed-effect model, best subset selection, and
+lasso regression and ridge regression.
+
+# 2. Data
+
+## 2.1. Data sources
+
+The data comes from the BPD Collaborative Registry, a multi-center
+consortium of interdisciplinary BPD programs located in the United
+States and Sweden formed to address gaps in evidence and promote
+research to enhance the care of children with severe forms of BPD. It
+specifically records data on infants born before 32 weeks of gestation
+and diagnosed with severe bronchopulmonary dysplasia (sBPD), as defined
+by the 2001 NHLBI criteria. This includes infants requiring a fractional
+inspired oxygen (FiO2) of more than 0.3 or any form of positive pressure
+ventilation at 36 weeks postmenstrual age (PMA). The registry gathers
+standard demographic and clinical information at key intervals: at
+birth, and at 36, 44 weeks PMA, and at discharge.
+
+The data is pre-processed by converting the variables into the
+appropriate types as specified in the codebook. Out of 28 variables, 26
+have missing values. Missing values in the variable of `center` are
+imputed based on the patients' record IDs. Three duplicate records have
+also been removed. Since `mat_race` is recorded differently between the
+data and the codebook, this variable will be excluded from future
+analyses.
+
+Table 1 presents the challenge of missing data across various variables,
+with the extent of missingness showing significant variation. Notably,
+data collected at the 44-week corrected gestational age exhibit the most
+substantial missingness. Additionally, the variable `any_surf`,
+indicating surfactant administration within the first 72 hours, displays
+a similar pattern of missingness to the 44-week variables. A significant
+number of missing entries are also found in the 36-week data. To address
+these concerns, multiple imputation will be implemented to enable a more
+robust and complete analysis.
+
+```{r}
+# check missing data
+data_miss <- data %>% dplyr::select(colnames(data[ ,colSums(is.na(data))>0]))
+# calculate the percentage of missing
+data_miss_pct <- data.frame(cbind(Number = colSums(is.na(data_miss)), 
+                                  Pct = paste0(round(100*colSums(is.na(data_miss))/nrow(data_miss), 2), "%"))) 
+
+data_miss_pct <- data_miss_pct %>%
+  arrange(desc(as.numeric(Number)))
+
+
+data_miss_pct$Variable <- rownames(data_miss_pct)
+rownames(data_miss_pct) <- NULL
+data_miss_pct <- data_miss_pct[, c(3,1,2)] # reorder the column
+
+# create table for summary of missing values
+n <- nrow(data_miss_pct)
+second <- n %/% 2
+
+# Splitting the data frame into 3 parts
+df1 <- data_miss_pct[1:second,]
+df2 <- data_miss_pct[(second+1):n,]
+rownames(df2) <- NULL
+```
+
+```{r}
+kable(cbind(df1, df2), booktabs = T, escape = T, 
+      caption = "Summary of Missing Values",
+      align = "c") %>%
+  kable_styling(latex_options = c("HOLD_position", "scale_down"))
+```
+
+```{r}
+# impute missing center 
+data[is.na(data$center), ]$center <- 1
+
+# duplicated records
+data <- data[!duplicated(data),]
+
+# drop race
+data <- data[, -3]
+```
+
+```{r}
+# change the data type according to the codebook
+data$center <- as.factor(data$center)
+data$mat_ethn <- as.factor(data$mat_ethn)
+data$del_method <- as.factor(data$del_method)
+data$prenat_ster <- as.factor(data$prenat_ster)
+data$com_prenat_ster <- as.factor(data$com_prenat_ster)
+data$mat_chorio <- as.factor(data$mat_chorio)
+data$gender <- as.factor(data$gender)
+data$sga <- as.factor(data$sga)
+data$any_surf <- as.factor(data$any_surf)
+data$Death <- as.factor(data$Death)
+
+data$ventilation_support_level.36 <- as.factor(data$ventilation_support_level.36)
+data$ventilation_support_level_modified.44 <- as.factor(data$ventilation_support_level_modified.44)
+data$Trach <- as.factor(data$Trach)
+```
+
+## 2.2. Demographics and Clinical Diagnosis
+
+```{r}
+# change labels
+data <- data %>%
+  mutate(
+    mat_ethn = factor(mat_ethn, levels = c(1, 2), labels = c("Hispanic or Latino", "Not Hispanic or Latino")),
+    del_method = factor(del_method, levels = c(1, 2), labels = c("Vaginal delivery", "Cesarean section")),
+    ventilation_support_level.36 = factor(ventilation_support_level.36, levels = c(0, 1, 2), labels = c("No respiratory support or supplemental oxygen", "Non-invasive positive pressure", "Invasive positive pressure")),
+    ventilation_support_level_modified.44 = factor(ventilation_support_level_modified.44, levels = c(0, 1, 2), labels = c("No respiratory support or supplemental oxygen", "Non-invasive positive pressure", "Invasive positive pressure")),
+    Trach = factor(Trach, levels = c(0, 1), labels = c("No Trachoestomy", "Trachoestomy"))
+  )
+```
+
+Table 2 highlights the variability in tracheostomy rates and mortality
+rates among the centers. The tracheostomy rates has a range from 0% at
+Center 20 to 100% at Center 21, underscoring the significant disparities
+in practice. Notably, Centers 12 and 1 exhibit higher rates of 50.72%
+and 41.54%, respectively, which may suggest more aggressive treatment
+approaches or patient profiles requiring such interventions. In
+contrast, Centers 3, 7, and 16 have rates below 4%, which could reflect
+variations in demographics, protocols, or resources. The mortality rates
+ranges from 0% at Center 7, 16, 20 and 21 to 20.29% at Center 12. The
+incidence of death is more rare compared to tracheostomy.
+
+The pronounced differences across centers are statistically confirmed by
+a chi-squared test (p \< 0.001). Importantly, Center 2 accounts for over
+60% of the patient cohort, highlighting a multilevel data structure and
+underscoring the importance of appropriately accounting for the `center`
+variable in analysis.
+
+```{r}
+center_trach_death <- data %>%
+  group_by(center) %>%
+  summarise(
+    With_Trach = sum(Trach == "Trachoestomy", na.rm = TRUE),
+    death = sum(Death == "Yes", na.rm = TRUE),
+    Total = n()
+  ) %>%
+  ungroup() %>%
+  mutate(
+    Tracheostomy_Percent = scales::percent(With_Trach / Total, accuracy = 0.01),
+    Death_Percent = scales::percent(death / Total, accuracy = 0.01)) %>%
+  dplyr::select(center, Total,  Tracheostomy_Percent, Death_Percent)
+
+center_trach_death %>% kable(booktabs = T, escape = T, align = "c",
+                       caption = "Tracheostomy and death Proportions across the Centers",
+                       col.names = c("Center", "Total", "Tracheostomy Proportion", "Death Proportion")) %>%
+  kable_styling(latex_options = c("HOLD_position"))
+
+  
+```
+
+```{r, results='hide'}
+trach_contingency_table <- table(data$center, data$Trach)
+
+# Perform the Chi-squared test
+chisq.test(trach_contingency_table)
+
+death_contingency_table <- table(data$center, data$Death)
+
+chisq.test(death_contingency_table)
+```
+
+The demographic and clinical diagnosis data presented in Table 3 compare
+infants across different tracheostomy statuses and mortality outcomes,
+revealing noteworthy differences in several metrics.
+
+For tracheostomy cases, there was a notable reduction in birth weight
+compared to those without tracheostomy, with a median weight of 655
+grams versus 753 grams, respectively, and this difference was
+statistically significant with a p-value of 0.04. Additionally, 30% of
+the infants in the tracheostomy group were small for gestational age
+(SGA), a higher percentage than the 19% in the non-tracheostomy group
+(p=0.005). Delivery method differed significantly, with more infants in
+the tracheostomy group born via cesarean section (79% vs. 70%, p=0.035).
+A significant contrast was evident at 36 weeks of corrected gestational
+age, with 72% of the tracheostomy group requiring invasive positive
+pressure ventilation, compared to 20% not needing such support
+(p\<0.001) in the no tracheostomy group. By 44 weeks, the need for
+invasive positive pressure increased to 77% in the tracheostomy group
+versus just 15% (p\<0.001). The no tracheostomy group's non-invasive
+positive pressure decrease from 67% at 36 weeks to 28% at 44 weeks,
+while the tracheostomy group only dropped 7%. Additionally, infants with
+tracheostomies have higher median peak inspiratory pressures at both 36
+and 44 weeks, and a greater proportion required medication for pulmonary
+hypertension at 44 weeks. The tracheostomy group also had significantly
+higher discharge ages. Mortality rates were significantly higher in the
+tracheostomy group (12% vs. 4.4%, p\<0.001), suggesting that infants
+requiring tracheostomy may have more severe underlying conditions or
+complications. No significant differences were observed in maternal
+ethnicity, chorioamnionitis, or gender.
+
+In terms of death, the number of deceased infants totaled 54, which is
+fewer than the 146 requiring tracheostomy. Similar patterns are
+observed. The median birth weight in the group that passed away was
+significantly lower at 603 grams compared to 750 grams in the surviving
+group, with a small p-value of less than 0.001, and a greater proportion
+of these infants were categorized as SGA (48% versus 19%, p\<0.001),
+highlighting a more pronounced disparity. However, the delivery method
+did not show a significant difference here. At 36 weeks' corrected
+gestational age, the requirement for invasive positive pressure was much
+higher in the mortality group (81%) compared to the living group (24%),
+with a significant p-value of less than 0.001. At 44 weeks, the need
+rose to 85% in the mortality group versus 23% in the living group
+(p\<0.001). The reduction in non-invasive positive pressure use was
+steeper in the living group, falling from 64% at 36 weeks to 26% at 44
+weeks, whereas the mortality group only has a negligible decrease of 2%.
+Those in the mortality group also had significantly later discharge
+ages. Rates of tracheostomy were markedly higher in the mortality group
+(31% versus 14%, p\<0.001), reinforcing the notion that tracheostomy is
+often associated with more severe health complications. Similar to the
+tracheostomy analysis, no significant differences were noted in maternal
+ethnicity, chorioamnionitis, or gender.
+
+```{r}
+# by trach
+t1 <- data[, -1] %>%
+  tbl_summary(by = Trach, missing = "no",
+              label = list(mat_ethn ~ "Maternal Ethnicity",
+                           bw ~ "Birth Weight (g)",
+                           ga ~ "Obstetrical Gestational Age",
+                           blength ~ "Birth Length (cm)",
+                           birth_hc ~ "Birth Head Hircumference (cm)",
+                           gender ~ "Gender",
+                           del_method ~ "Delivery Method",
+                           prenat_ster ~ "Prenatal Corticosteroids",
+                           com_prenat_ster ~ "Complete Prenatal Steroids",
+                           mat_chorio ~ "Maternal Chorioamnionitis",
+                           sga ~ "Small for Gestational Age",
+                           any_surf ~ "Received Surfactant",
+                           ventilation_support_level.36 ~ "Ventilation Support at 36 Weeks",
+                           inspired_oxygen.36 ~ "Fraction of Inspired Oxygen at 36 Weeks",
+                           weight_today.36 ~ "Weight at 36 Weeks",
+                           p_delta.36 ~ "Peak Inspiratory Pressure (cm H2O) at 36 Weeks",
+                           peep_cm_h2o_modified.36 ~ "Positive and Exploratory Pressure (cm H2O) at 36 Weeks",
+                           med_ph.36 ~ "Medication for Pulmonary Hypertension at 36 Weeks",
+                           ventilation_support_level_modified.44 ~ "Ventilation Support at 44 Weeks",
+                           inspired_oxygen.44 ~ "Fraction of Inspired Oxygen at 44 Weeks",
+                           weight_today.44 ~ "Weight at 44 Weeks",
+                           p_delta.44 ~ "Peak Inspiratory Pressure (cm H2O) at 44 Weeks",
+                           peep_cm_h2o_modified.44 ~ "Positive and Exploratory Pressure (cm H2O) at 44 Weeks",
+                           med_ph.44 ~ "Medication for Pulmonary Hypertension at 44 Weeks",
+                           hosp_dc_ga ~ "Hospital Discharge Gestational Age"
+    ))%>%
+  add_p() %>%
+  bold_labels() 
+```
+
+```{r}
+# by death
+t2 <- data[, -1] %>%
+  tbl_summary(by = Death, missing = "no",
+              label = list(mat_ethn ~ "Maternal Ethnicity",
+                           bw ~ "Birth Weight (g)",
+                           ga ~ "Obstetrical Gestational Age",
+                           blength ~ "Birth Length (cm)",
+                           birth_hc ~ "Birth Head Hircumference (cm)",
+                           gender ~ "Gender",
+                           del_method ~ "Delivery Method",
+                           prenat_ster ~ "Prenatal Corticosteroids",
+                           com_prenat_ster ~ "Complete Prenatal Steroids",
+                           mat_chorio ~ "Maternal Chorioamnionitis",
+                           sga ~ "Small for Gestational Age",
+                           any_surf ~ "Received Surfactant",
+                           ventilation_support_level.36 ~ "Ventilation Support at 36 Weeks",
+                           inspired_oxygen.36 ~ "Fraction of Inspired Oxygen at 36 Weeks",
+                           weight_today.36 ~ "Weight at 36 Weeks",
+                           p_delta.36 ~ "Peak Inspiratory Pressure (cm H2O) at 36 Weeks",
+                           peep_cm_h2o_modified.36 ~ "Positive and Exploratory Pressure (cm H2O) at 36 Weeks",
+                           med_ph.36 ~ "Medication for Pulmonary Hypertension at 36 Weeks",
+                           ventilation_support_level_modified.44 ~ "Ventilation Support at 44 Weeks",
+                           inspired_oxygen.44 ~ "Fraction of Inspired Oxygen at 44 Weeks",
+                           weight_today.44 ~ "Weight at 44 Weeks",
+                           p_delta.44 ~ "Peak Inspiratory Pressure (cm H2O) at 44 Weeks",
+                           peep_cm_h2o_modified.44 ~ "Positive and Exploratory Pressure (cm H2O) at 44 Weeks",
+                           med_ph.44 ~ "Medication for Pulmonary Hypertension at 44 Weeks",
+                           hosp_dc_ga ~ "Hospital Discharge Gestational Age"
+    ))%>%
+  add_p() %>%
+  bold_labels() 
+```
+
+```{r}
+tbl_merge(list(t1, t2),
+          tab_spanner = c("Trachoestomy", "Death"))%>%
+  as_kable_extra(booktabs = T, escape = F, align = "c", caption = "Demographics and Clinical Diagnosis in Infants") %>%
+  kable_styling(latex_options = c("HOLD_position", "scale_down"))
+```
+
+# 3. Methods
+
+## 3.1. Multiple Imputation
+
+Multiple imputation will be used to address missing data. This method
+creates several imputed datasets, introducing variability in the imputed
+values to reflect the uncertainty around the true values. The imputation
+phase involves applying algorithms repetitively to generate values for
+the missing data. Subsequently, in the analysis phase, each dataset
+undergoes standard statistical analysis as though it were complete. The
+final phase, pooling, aggregates the results from all datasets, yielding
+parameter estimates that incorporate the variability across the
+imputations. In our project, models are fitted to 5 complete datasets,
+and the resulting estimates are then pooled, thus derivating final
+models.
+
+## 3.2. Models
+
+In this project, four models are compared: logistic mixed-effect model
+with the `center` variable as a random effect, best subset selection,
+lasso regression, and ridge regression. Both 5-fold cross-validation and
+train-test splitting methods will be employed for building models. The
+model will be trained on 70% of the data and validated on the rest data.
+
+Mixed-effect model incorporates fixed effects for the observed
+covariates and random effects for the intercepts associated with each
+center, capturing the variability between centers. The mixed-effects
+approach is particularly suited for data where random variability exists
+across different groups---in our study, medical centers. The penalized
+form for the mixed-effects model would be:
+$$\underset{\beta, b}{\text{minimize}}||Y-X\beta-Zb||^2_2 +\lambda||b||_2$$
+where $Z$ is the random effects design matrix, b is the random effects
+and $||\beta||_2=\sum_{j=1}^{p}\beta_j^2$.
+
+With a response vector $Y\in \mathbf{R}^n$, predictor matrix
+$X\in\mathbf{R}^{n\times p}$ and a subset size $k$ between 0 and
+min$\{n,p\}$, best subset selection aims to identify the set of $k$
+predictors that minimize the squared error, solving the nonconvex
+problem
+$$\underset{\beta\in \mathbf{R}^p}{\text{minimize}}||Y-X\beta||^2_2 \quad\text{subject to}\quad ||\beta||_0\leq k,$$
+
+with $||\beta||_0 = \sum_{i=1}^p1\{\beta_i\neq 0\}$ denoting the count
+of nonzero entries in $\beta$, known as the $\ell_0$ norm.
+
+The lasso method solved a convex relaxation of the best subset by
+replacing the $\ell_0$ norm with the $\ell_1$ norm,
+$$\underset{\beta\in \mathbf{R}^p}{\text{minimize}}||Y-X\beta||^2_2 \quad\text{subject to}\quad ||\beta||_1\leq t,$$
+
+where $||\beta||_1 = \sum_{i=1}^p|\beta_i|$ and $t\geq 0$ is a tuning
+parameter, which can be also commonly represented in a penalized form
+$$\underset{\beta\in \mathbf{R}^p}{\text{minimize}}||Y-X\beta||^2_2 + \lambda||\beta||_1,$$
+
+where now $\lambda \geq 0$ serves as a tuning parameter.
+
+On the other hand, the ridge method minimize
+$$\underset{\beta\in \mathbf{R}^p}{\text{minimize}}||Y-X\beta||^2_2 +\lambda||\beta||_2.$$
+The only difference between these two regularization regressions is
+their penalty terms. Both best subset and lasso can help us to perform
+variable selection.
+
+The project's aim is to construct a regression model that predicts the
+combined outcome of tracheostomy or death. This model will inform the
+criteria and optimal timing for tracheostomy placement. Consequently, we
+introduce a new composite variable, Y. In this binary outcome, patients
+are labeled '1' if they received a tracheostomy or succumbed to their
+condition, and '0' if they survived without undergoing a tracheostomy.
+This variable allows for a comprehensive analysis of both tracheostomy
+and patient survival. The logistic regression will be used:
+$$log\left(\frac{p}{1-p}\right) = \beta_0 + \beta_1x_1 + \beta_2x_2 + \ldots + \beta_nx_n$$.
+
+```{r}
+# Create a 2-level composite outcome
+data$Y <- case_when(data$Trach == "No Trachoestomy" & data$Death == "No" ~ 0, 
+                    data$Trach == "Trachoestomy" | data$Death == "Yes" ~ 1)
+
+```
+
+```{r}
+# train-test split
+set.seed(2550)
+ignore <- sample(c(TRUE, FALSE), size = 996, replace = TRUE, prob = c(0.3, 0.7))
+
+data_df_mice_out <- mice(data, ignore = ignore, m=5, pri=F, seed=2550)
+
+data_df_mice_out.train <- filter(data_df_mice_out, !ignore)
+data_df_mice_out.test <- filter(data_df_mice_out, ignore)
+
+traindata <- data_df_mice_out.train$data
+testdata <- data_df_mice_out.test$data
+
+# Store each imputed data set
+data_df_imp.train <- vector("list",5)    
+for (i in 1:5){
+  data_df_imp.train[[i]] <- mice::complete(data_df_mice_out.train,i) 
+}
+
+data_df_imp.test <- vector("list",5)    
+for (i in 1:5){
+  data_df_imp.test[[i]] <- mice::complete(data_df_mice_out.test,i) 
+}
+
+```
+
+```{r}
+###################################################### 
+#### Mixed-effect Model #### 
+###################################################### 
+mixed_coef <- matrix(nrow = 28, ncol = 5)
+mod_mixed_list <- list()
+for (i in 1:5) {
+  # Fit logistic mixed-effects model with center as a random effect
+  mod_mixed_list[[i]] <- glmer(Y ~ mat_ethn + bw + ga + blength + birth_hc + del_method + prenat_ster + 
+    com_prenat_ster + mat_chorio + gender + sga + any_surf + 
+    weight_today.36 + ventilation_support_level.36 + inspired_oxygen.36 + 
+    p_delta.36 + peep_cm_h2o_modified.36 + med_ph.36 + weight_today.44 + 
+    ventilation_support_level_modified.44 + inspired_oxygen.44 + 
+    p_delta.44 + peep_cm_h2o_modified.44 + med_ph.44 + hosp_dc_ga + (1 | center), family = binomial(), 
+                   data = data_df_imp.train[[i]][, -c(1, 28, 29)])
+
+  # Store the fixed effects coefficients
+  mixed_coef[, i] <- fixef(mod_mixed_list[[i]])
+  
+}
+avg_coefs_mixed <- apply(mixed_coef, 1, mean)
+
+```
+
+```{r}
+###################################################### 
+#### Best Subset #### 
+###################################################### 
+bestsubset <- function(df) { 
+  #' Runs 10-fold CV for best subset and returns corresponding coefficients 
+  #' @param df, data set
+  #' @return coef, coefficients for minimum cv error
+  
+  # Matrix form for ordered variables 
+  x.ord <- model.matrix(Y~., data = df[, -c(1, 28, 29)])[, -1]
+  y.ord <- df$Y
+  
+  # Best subset model
+  bestsubset_mod_cv <- L0Learn.cvfit(x.ord, y.ord, nFolds = 10, seed = 1)
+  
+  
+  # Get coefficients 
+  coef <- coef(bestsubset_mod_cv) 
+  return(coef) 
+} 
+
+# Find average bestsubset coefficients over imputed datasets
+bestsubset_coef1 <- bestsubset(data_df_imp.train[[1]]) 
+bestsubset_coef2 <- bestsubset(data_df_imp.train[[2]]) 
+bestsubset_coef3 <- bestsubset(data_df_imp.train[[3]]) 
+bestsubset_coef4 <- bestsubset(data_df_imp.train[[4]]) 
+bestsubset_coef5 <- bestsubset(data_df_imp.train[[5]]) 
+bestsubset_coef <- cbind(bestsubset_coef1, bestsubset_coef2, bestsubset_coef3, 
+                    bestsubset_coef4, bestsubset_coef5) 
+avg_coefs_bestsubset <- apply(bestsubset_coef, 1, mean) 
+
+
+traindata_long <- mice::complete(data_df_mice_out.train,action="long") 
+x_vars_train <- model.matrix(Y~. , traindata_long[, -c(1,2,3, 30, 31)])
+
+traindata_long$bestsubset<- x_vars_train %*% avg_coefs_bestsubset
+mod_bestsubset <- glm(Y ~ bestsubset, data = traindata_long, family = "binomial")
+
+```
+
+```{r}
+###################################################### 
+#### Lasso #### 
+###################################################### 
+
+lasso <- function(df) { 
+  #' Runs 10-fold CV for lasso and returns corresponding coefficients 
+  #' @param df, data set
+  #' @return coef, coefficients for minimum cv error
+  
+  # Matrix form for ordered variables 
+  x.ord <- model.matrix(Y~., data = df[, -c(1, 28, 29)])[, -1]
+  y.ord <- df$Y
+  
+  # Generate folds
+  k <- 10 
+  set.seed(1) # consistent seeds between imputed data sets
+  folds <- sample(1:k, nrow(df), replace=TRUE)
+  
+  # Lasso model
+  lasso_mod_cv <- cv.glmnet(x.ord, y.ord, nfolds = 10, foldid = folds, 
+                         alpha = 1, family = "binomial") 
+  lasso_mod <- glmnet(x.ord, y.ord, nfolds = 10, alpha = 1, family = "binomial",
+                      lambda = lasso_mod_cv$lambda.min)
+  
+  # Get coefficients 
+  coef <- coef(lasso_mod) 
+  return(coef) 
+} 
+
+# Find average lasso coefficients over imputed datasets
+lasso_coef1 <- lasso(data_df_imp.train[[1]]) 
+lasso_coef2 <- lasso(data_df_imp.train[[2]]) 
+lasso_coef3 <- lasso(data_df_imp.train[[3]]) 
+lasso_coef4 <- lasso(data_df_imp.train[[4]]) 
+lasso_coef5 <- lasso(data_df_imp.train[[5]]) 
+lasso_coef <- cbind(lasso_coef1, lasso_coef2, lasso_coef3, 
+                    lasso_coef4, lasso_coef5) 
+avg_coefs_lasso <- apply(lasso_coef, 1, mean) 
+
+traindata_long$lasso<- x_vars_train %*% avg_coefs_lasso
+mod_lasso <- glm(Y ~ lasso, data = traindata_long, family = "binomial")
+
+```
+
+```{r}
+###################################################### 
+#### Ridge #### 
+###################################################### 
+
+ridge <- function(df) { 
+  #' Runs 10-fold CV for ridge and returns corresponding coefficients 
+  #' @param df, data set
+  #' @return coef, coefficients for minimum cv error
+  
+  # Matrix form for ordered variables 
+  x.ord <- model.matrix(Y~., data = df[, -c(1, 28, 29)])[, -1]
+  y.ord <- df$Y
+  
+  # Generate folds
+  k <- 10 
+  set.seed(1) # consistent seeds between imputed data sets
+  folds <- sample(1:k, nrow(df), replace=TRUE)
+  
+  # Ridge model
+  ridge_mod_cv <- cv.glmnet(x.ord, y.ord, nfolds = 10, foldid = folds, 
+                         alpha = 0, family = "binomial") 
+  ridge_mod <- glmnet(x.ord, y.ord, nfolds = 10, alpha = 0, family = "binomial",
+                      lambda = ridge_mod_cv$lambda.min)
+  
+  # Get coefficients 
+  coef <- coef(ridge_mod) 
+  return(coef) 
+} 
+
+# Find average ridge coefficients over imputed datasets
+ridge_coef1 <- ridge(data_df_imp.train[[1]]) 
+ridge_coef2 <- ridge(data_df_imp.train[[2]]) 
+ridge_coef3 <- ridge(data_df_imp.train[[3]]) 
+ridge_coef4 <- ridge(data_df_imp.train[[4]]) 
+ridge_coef5 <- ridge(data_df_imp.train[[5]]) 
+ridge_coef <- cbind(ridge_coef1, ridge_coef2, ridge_coef3, 
+                    ridge_coef4, ridge_coef5) 
+avg_coefs_ridge <- apply(ridge_coef, 1, mean)
+
+# Find predicted probabilities on long imputed data
+traindata_long$ridge<- x_vars_train %*% avg_coefs_ridge
+mod_ridge <- glm(Y ~ ridge, data = traindata_long, family = "binomial")
+
+```
+
+# 4. Comparision and Evaluation
+
+Since the outcome of our model is binary, we used AIC, BIC, Brier score,
+and area under the curve (AUC) to evaluate our models on the test
+datasets, which represent 30% of the data excluding the training set.
+AUC can be used to compare their discrimination ability, which is the
+ability of the model to differentiate between people with and without
+the outcome. Table 4 displays the summary statistics. The mixed-effects
+model demonstrated significantly lower AIC and BIC values at 405 and
+536, suggesting a superior fit compared to other models. The Ridge
+regression model exhibited the highest AUC value, suggesting enhanced
+predictive accuracy for binary outcomes. Brier scores were similar
+across models, with the Ridge model slightly better than the others,
+indicating predictions more closely aligned with actual outcomes.
+However, the notably lower AIC and BIC values for the mixed-effects
+model underscore the significance of including the random effect of the
+`center` variable.
+
+Table 5 presents the thresholds of the four models that maximize the sum
+of sensitivity and specificity, respectively. All four thresholds range
+between 0.1 and 0.2, the specificity values are around 0.85, and the
+sensitivity values lie between 0.86 to 0.92.
+
+```{r}
+testdata_long <- mice::complete(data_df_mice_out.test,action="long") 
+x_vars_test <- model.matrix(Y~. , testdata_long [, -c(3, 30, 31)])[, -c(2,3)]
+
+testdata_long$bestsubset<- x_vars_test %*% avg_coefs_bestsubset
+testdata_long$lasso<- x_vars_test %*% avg_coefs_lasso
+testdata_long$ridge<- x_vars_test %*% avg_coefs_ridge
+```
+
+```{r}
+predict_probs_mixed <- vector("list", 5)
+for (i in 1:5) {
+  predict_probs_mixed[[i]] <- predict(mod_mixed_list[[i]], 
+                                  newdata = data_df_imp.test[[i]][, -c(1, 28, 29)], 
+                                  type = "response")
+}
+
+predict_probs_bestsubset <- predict(mod_bestsubset, newdata = testdata_long, type="response")
+predict_probs_lasso <- predict(mod_lasso, newdata = testdata_long, type="response")
+predict_probs_ridge <- predict(mod_ridge, newdata = testdata_long, type="response")
+```
+
+```{r}
+# 1. Mixed-effect Model
+
+aic_mixed <- numeric(5)
+bic_mixed <- numeric(5)
+brier_mixed <- numeric(5)
+auc_mixed <- numeric(5)
+roc_mixed <- matrix(nrow = 5, ncol = 3)
+
+for (i in 1:5) {
+  
+  # Get AIC and BIC
+  aic_mixed[i] <- AIC(mod_mixed_list[[i]])
+  bic_mixed[i] <- BIC(mod_mixed_list[[i]])
+  
+  # Calculate Brier Score
+  brier_mixed[i] <- mean((predict_probs_mixed[[i]] -
+                           data_df_imp.test[[i]]$Y)^2)
+  
+  # Calculate AUC
+  roc_mod_mixed <- roc(response = data_df_imp.test[[i]]$Y, 
+                   predictor = predict_probs_mixed[[i]])
+  auc_mixed[i] <- auc(roc_mod_mixed)
+  
+  roc_mixed[i,] <- as.numeric(as.vector(coords(roc_mod_mixed, "best")[1,]))
+}
+
+```
+
+```{r}
+# 2. Best Subset
+# ROC
+roc_mod_bestsubset <- roc(predictor = predict(mod_bestsubset, newdata = testdata_long, type="response"),
+                     response = as.factor(testdata_long$Y),
+                     levels = c(0,1), direction = "<")
+
+p_roc_bestsubset <- ggroc(roc_mod_bestsubset) +
+  geom_text(aes(0.25, 0.15, label = paste0("AUC = ",
+                paste(unlist(round(roc_mod_bestsubset$auc,4))))), size=10) + 
+  ggtitle("Best Subset") +
+  theme_grey(base_size = 22)
+
+# Calibration
+num_cuts <- 10
+calib_data <-  data.frame(prob = predict(mod_bestsubset, type="response"),
+                          bin = cut(predict(mod_bestsubset, type="response"), 
+                                    breaks = num_cuts),
+                          class = mod_bestsubset$y)
+calib_data <- calib_data %>% 
+             group_by(bin) %>% 
+             summarize(observed = sum(class)/n(), 
+                       expected = sum(prob)/n(), 
+                       se = sqrt(observed*(1-observed)/n()))
+
+p_calib_bestsubset <- ggplot(calib_data) + 
+  geom_abline(intercept = 0, slope = 1, color="red") + 
+  geom_errorbar(aes(x = expected, 
+                    ymin = observed - 1.96*se, 
+                    ymax = observed + 1.96*se), 
+                colour="black", width=.01)+
+  geom_point(aes(x = expected, y = observed)) +
+  labs(x = "Expected Proportion", y = "Observed Proportion") + 
+  theme_grey(base_size = 22)
+
+```
+
+```{r}
+# 3. Lasso
+# ROC
+roc_mod_lasso <- roc(predictor = predict(mod_lasso, newdata = testdata_long, type="response"),
+                     response = as.factor(testdata_long$Y),
+                     levels = c(0,1), direction = "<")
+
+p_roc_lasso <- ggroc(roc_mod_lasso) + 
+  geom_text(aes(0.25, 0.15, label = paste0("AUC = ",
+                paste(unlist(round(roc_mod_lasso$auc,4))))), size=10) + 
+  ggtitle("Lasso") +
+  theme_grey(base_size = 22)
+
+# Calibration
+num_cuts <- 10
+calib_data <-  data.frame(prob = predict(mod_lasso, type="response"),
+                          bin = cut(predict(mod_lasso, type="response"), 
+                                    breaks = num_cuts),
+                          class = mod_lasso$y)
+calib_data <- calib_data %>% 
+             group_by(bin) %>% 
+             summarize(observed = sum(class)/n(), 
+                       expected = sum(prob)/n(), 
+                       se = sqrt(observed*(1-observed)/n()))
+
+p_calib_lasso <- ggplot(calib_data) + 
+  geom_abline(intercept = 0, slope = 1, color="red") + 
+  geom_errorbar(aes(x = expected, 
+                    ymin = observed - 1.96*se, 
+                    ymax = observed + 1.96*se), 
+                colour="black", width=.01)+
+  geom_point(aes(x = expected, y = observed)) +
+  labs(x = "Expected Proportion", y = "Observed Proportion") + 
+  theme_grey(base_size = 22)
+
+```
+
+```{r}
+# 4. Ridge
+# ROC
+roc_mod_ridge <- roc(predictor = predict(mod_ridge, newdata = testdata_long, type="response"),
+                     response = as.factor(testdata_long$Y),
+                     levels = c(0,1), direction = "<")
+
+p_roc_ridge <- ggroc(roc_mod_ridge) + 
+  geom_text(aes(0.25, 0.15, label = paste0("AUC = ",
+                paste(unlist(round(roc_mod_ridge$auc,4))))), size=10) + 
+  ggtitle("Ridge") +
+  theme_grey(base_size = 22)
+
+# Calibration
+num_cuts <- 10
+calib_data <-  data.frame(prob = predict(mod_ridge, type="response"),
+                          bin = cut(predict(mod_ridge, type="response"), 
+                                    breaks = num_cuts),
+                          class = mod_ridge$y)
+calib_data <- calib_data %>% 
+             group_by(bin) %>% 
+             summarize(observed = sum(class)/n(), 
+                       expected = sum(prob)/n(), 
+                       se = sqrt(observed*(1-observed)/n()))
+
+p_calib_ridge <- ggplot(calib_data) + 
+  geom_abline(intercept = 0, slope = 1, color="red") + 
+  geom_errorbar(aes(x = expected, 
+                    ymin = observed - 1.96*se, 
+                    ymax = observed + 1.96*se), 
+                colour="black", width=.01)+
+  geom_point(aes(x = expected, y = observed)) +
+  labs(x = "Expected Proportion", y = "Observed Proportion") + 
+  theme_grey(base_size = 22)
+
+```
+
+```{r}
+# AIC, BIC, Brier & AUC
+df_mod <- rbind(AIC = round(c(mean(aic_mixed), AIC(mod_bestsubset),
+                              AIC(mod_lasso), AIC(mod_ridge)), 2),
+                BIC = round(c(mean(bic_mixed), BIC(mod_bestsubset),
+                              BIC(mod_lasso), BIC(mod_ridge)), 2),
+                Brier = round(c(mean(brier_mixed),
+                                mean((predict_probs_bestsubset - testdata_long$Y)^2),
+                                mean((predict_probs_lasso - testdata_long$Y)^2),
+                                mean((predict_probs_ridge - testdata_long$Y)^2)),4),
+                AUC = round(c(mean(auc_mixed),
+                              roc_mod_bestsubset$auc,
+                              roc_mod_lasso$auc,
+                              roc_mod_ridge$auc),4))
+
+colnames(df_mod) <-  c("Mixed-effects", "Best Subset",
+                       "Lasso", "Ridge")
+
+kable(df_mod, booktabs = T, escape = T, 
+      caption = "AIC, BIC, Brier Score and AUC") %>% 
+  kable_styling(latex_options = c("HOLD_position"))
+```
+
+```{r}
+df_thres <- round(rbind(colMeans(roc_mixed),
+                        coords(roc_mod_bestsubset, "best"),
+                        coords(roc_mod_lasso, "best"),
+                        coords(roc_mod_ridge, "best")), 4)
+
+rownames(df_thres) <- c("Mixed-effects", "Best Subset", 
+                          "Lasso", "Ridge")
+
+kable(df_thres, booktabs = T, escape = T, 
+      caption = "Specifity and Sensitivity at Thresholds") %>% 
+  kable_styling(full_width = F, 
+                latex_options = c("HOLD_position"))
+```
+
+In order to further compare best subset in a intuitive way, lasso and
+ridge, the calibration and the receiver operating characteristic (ROC)
+curve are plotted in Figure 1. Calibration assesses the agreement
+between observed event frequencies and predicted probabilities. It is
+visualized through a calibration plot, which contrasts the predicted
+probabilities against observed event rates, illustrating how well the
+predictions match actual outcomes. All three models exhibit good
+calibration, closely tracking the ideal 45-degree line. Notably, the
+lasso model's calibration plot demonstrates the tightest adherence to
+this line, suggesting superior calibration accuracy.
+
+```{r fig.height=22, fig.width=15, fig.align='center', fig.cap="Calibration Plots and ROC Curves for the Six Models"}
+comb_plot <- ggarrange(p_calib_bestsubset, p_roc_bestsubset,
+                       p_calib_lasso, p_roc_lasso, 
+                       p_calib_ridge, p_roc_ridge,
+                       ncol = 2, nrow=3)
+comb_plot 
+```
+
+# 5. Discussion
+
+```{r}
+# Refit on the whole dataset
+data_df_imp <- vector("list",5)    
+for (i in 1:5){
+  data_df_imp[[i]] <- mice::complete(data_df_mice_out,i) 
+}
+```
+
+```{r}
+# Mixed-effects
+mixed_coef_full <- matrix(nrow = 28, ncol = 5)
+mod_mixed_full_list <- vector("list", length = 5)
+
+for (i in 1:5) {
+  # Fit logistic mixed-effects model with center as a random effect
+  mod_mixed_full_list[[i]] <- glmer(Y ~ mat_ethn + bw + ga + blength + birth_hc + del_method + prenat_ster + 
+    com_prenat_ster + mat_chorio + gender + sga + any_surf + 
+    weight_today.36 + ventilation_support_level.36 + inspired_oxygen.36 + 
+    p_delta.36 + peep_cm_h2o_modified.36 + med_ph.36 + weight_today.44 + 
+    ventilation_support_level_modified.44 + inspired_oxygen.44 + 
+    p_delta.44 + peep_cm_h2o_modified.44 + med_ph.44 + hosp_dc_ga + (1 | center), family = binomial(), 
+                   data = data_df_imp[[i]][, -c(1, 28, 29)])
+
+  # Store the fixed effects coefficients
+  mixed_coef_full[, i] <- fixef(mod_mixed_full_list[[i]])
+  
+}
+avg_coefs_mixed_full <- apply(mixed_coef_full, 1, mean)
+```
+
+```{r}
+# Bestsubset
+bestsubset_coef1_full <- bestsubset(data_df_imp[[1]]) 
+bestsubset_coef2_full <- bestsubset(data_df_imp[[2]]) 
+bestsubset_coef3_full <- bestsubset(data_df_imp[[3]]) 
+bestsubset_coef4_full <- bestsubset(data_df_imp[[4]]) 
+bestsubset_coef5_full <- bestsubset(data_df_imp[[5]]) 
+bestsubset_coef_full <- cbind(bestsubset_coef1_full, bestsubset_coef2_full, bestsubset_coef3_full, 
+                    bestsubset_coef4_full, bestsubset_coef5_full) 
+avg_coefs_bestsubset_full <- apply(bestsubset_coef_full, 1, mean) 
+```
+
+```{r}
+# Lasso
+lasso_coef1_full <- lasso(data_df_imp[[1]]) 
+lasso_coef2_full <- lasso(data_df_imp[[2]]) 
+lasso_coef3_full <- lasso(data_df_imp[[3]]) 
+lasso_coef4_full <- lasso(data_df_imp[[4]]) 
+lasso_coef5_full <- lasso(data_df_imp[[5]]) 
+lasso_coef_full <- cbind(lasso_coef1_full, lasso_coef2_full, lasso_coef3_full, 
+                    lasso_coef4_full, lasso_coef5_full) 
+avg_coefs_lasso_full <- apply(lasso_coef_full, 1, mean) 
+```
+
+```{r}
+# Ridge
+ridge_coef1_full <- ridge(data_df_imp[[1]]) 
+ridge_coef2_full <- ridge(data_df_imp[[2]]) 
+ridge_coef3_full <- ridge(data_df_imp[[3]]) 
+ridge_coef4_full <- ridge(data_df_imp[[4]]) 
+ridge_coef5_full <- ridge(data_df_imp[[5]]) 
+ridge_coef_full <- cbind(ridge_coef1_full, ridge_coef2_full, ridge_coef3_full, 
+                    ridge_coef4_full, ridge_coef5_full) 
+avg_coefs_ridge_full <- apply(ridge_coef_full, 1, mean)
+```
+
+```{r}
+avg_coefs_mixed_full <- c(avg_coefs_mixed_full[1], rep(0, 9), avg_coefs_mixed_full[-1])
+```
+
+```{r}
+coef_df <- round(cbind(avg_coefs_mixed_full,
+                       avg_coefs_bestsubset_full, 
+                       avg_coefs_lasso_full,
+                       avg_coefs_ridge_full),3)
+coef_df[coef_df == 0] <- "-"
+rownames(coef_df) <- names(avg_coefs_lasso_full)
+colnames(coef_df) <- c("Mixed-effects","Best Subset", "Lasso", "Ridge")
+coef_df %>% kable(booktabs = T, escape = T, align = "c",
+                       caption = "Model Coefficients") %>%
+  kable_styling(latex_options = c("HOLD_position", "scale_down"))
+```
+
+In this project, four regression models are used to predict the
+necessity and timing of tracheostomy placement within a clinical
+environment, utilizing a multi-center dataset encompassing a spectrum of
+demographic and clinical variables. Table 6 presents the model
+coefficients, quantifying each variable's impact on the likelihood of
+tracheostomy or mortality (denoted as `Y`). Here, positive coefficients
+indicate an elevated risk, while negative coefficients suggest a
+mitigating effect on the outcome.
+
+Lower birth metrics, such as birth weight (`bw`), gestational age (`ga`)
+is a signal of increased risk of complications, potentially
+necessitating an earlier tracheostomy. These relationships are mirrored
+in the coefficients' directions and magnitudes within our model. The
+delivery method (`del_method`), however, does not exhibit statistical
+significance.
+
+Moreover, the variables representing ventilation support levels at 36
+and 44 weeks were not statistically significant, whereas the fraction of
+inspired oxygen at 36 weeks (`inspired_oxygen.36`) was significant,
+contrary to its 44-week counterpart (`inspired_oxygen.44`). This
+variance at different time points suggests that oxygen levels are
+critical for determining the tracheostomy's timing. The medications for
+pulmonary hypertension (`med_ph.36` and `med_ph.44`) show divergent
+significance levels at these time points, indicating the severity of
+underlying pulmonary conditions and their importance in timing the
+procedure.
+
+Notably, birth weight (`bw`) and weight at 44 weeks (`weight_today.44`)
+are significant, while weight at 36 weeks (`weight_today.36`) and
+smallness for gestational age (`sga`) are not, highlighting the
+importance of considering weight variables in different aspects. Gender
+appears to have minimal impact on the outcomes. The completion of
+prenatal steroid courses (`prenat_ster` and `com_prenat_ster`) emerges
+as protective, reducing the likelihood of adverse outcomes.
+
+Tracheostomy decisions should be comprehensive, incorporating the
+distinct clinical indicators underscored by our model. Key
+predictors---such as inspired oxygen fraction, birth metrics, pulmonary
+hypertension treatment, and prenatal steroid administration---form a
+strategic basis for clinicians to evaluate BPD severity and guide
+tracheostomy timing and necessity for each infant.
+
+It is interesting that the mixed-effects model has coefficients with
+larger magnitudes than those obtained from the best subset, lasso, and
+ridge regression models. This is likely due to the intrinsic design of
+mixed-effects models, accounting for both fixed and random effects. The
+inclusion of random effects accounts for center variability, potentially
+magnifying the fixed effects' coefficients to more accurately reflect
+the effects of individual predictors. In contrast, lasso and ridge
+regression incorporate regularization penalties that constrain
+coefficient sizes to prevent overfitting and manage multicollinearity,
+while the best subset selection focuses on a limited number of
+predictors, potentially leading to a minimization of coefficient
+estimates.
+
+However, the models in this project are limited by certain assumptions
+required for logistic regression: the assumption of linearity, the
+influence of outliers, and the presence of multicollinearity. Our models
+do not include interaction terms to assess the linearity assumption. The
+residual plots seem to indicate the presence of some outliers,
+suggesting potential influential values. Furthermore, the ventilation
+support variables at 36 and 44 weeks have very high VIF values,
+indicating potential multicollinearity.
+
+```{r, results='hide'}
+summary(mod_mixed_full_list[[1]])
+```
+
+```{r, results='hide', eval=FALSE}
+car::vif(mod_mixed_full_list[[1]])
+plot(mod_mixed_full_list[[1]])
+```
+
+# 6. Conclusion
+
+The exploratory data analysis and regression models used in this study
+offer a comprehensive understanding of the factors influencing the
+necessity and timing of tracheostomy in infants with severe BPD. The
+models highlight the significance of birth metrics, respiratory support
+requirements, and medication for pulmonary hypertension as pivotal
+indicators. Notably, the mixed-effects model, with its capacity to
+encapsulate both fixed and random effects, showcased larger coefficient
+magnitudes, underscoring the complexity and variability inherent in
+multi-center clinical data. However, it is crucial to recognize the
+limitations presented by logistic regression assumptions, which include
+the need for linearity, the absence of influential outliers, and
+multicollinearity, areas where our models require further refinement.
+
+# References
