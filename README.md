@@ -8,6 +8,12 @@ The goal is to create a regression model to predict the composite outcome of tra
 - `Project2_Final.Rmd`: Code and text to generate the report.
 - `Project2_Final.pdf`: The submitted report.
 - `Project2.bib`: Bibliography used for this project.
+- `Project 2 update`: Updated project based on feedback.
+  - `preprocess.R`:Code to preprocess data, with some variables handled differently than in `data_process_EDA.Rmd`.
+  - `bestsubset.R`: Code to perform best subset models.
+  - `lasso.R`: Code to perform lasso models.
+  - `project2_update.Rmd`: Code and text to generate the updated report.
+  - `project2_update.pdf`: The updated report.
 
 ## Packages
 | Package    | Version  |
@@ -35,6 +41,7 @@ The goal is to create a regression model to predict the composite outcome of tra
 | ggplot2    | 3.4.4    |
 | tidyverse  | 2.0.0    |
 | kableExtra | 1.3.4    |
+| glmmLasso  | 1.6.3    |
 
 
 ## License
