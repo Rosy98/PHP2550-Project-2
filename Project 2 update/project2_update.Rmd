@@ -1,7 +1,7 @@
 ---
-title: "Project 2: Regression Analysis"
+title: "Predicting Tracheostomy or Death in Infants with Severe Bronchopulmonary Dysplasia (BPD)"
+subtitle: "Project 2: Regression Analysis [(Github Link)](https://github.com/Rosy98/PHP2550-Project-2)"
 author: "Zihan Zhou"
-subtitle: "[Github Link](https://github.com/Rosy98/PHP2550-Project-2)"
 date: "`r Sys.Date()`"
 output: pdf_document
 abstract: >
